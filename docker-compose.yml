@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # 1. POSTGRESQL 16 DATABASE
+  # ==========================================
+  db:
+    image: postgres:16-alpine
+    container_name: mindscope-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mindscope_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-mindscope_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mindscope_user -d mindscope_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mindscope-network
+
+  # ==========================================
+  # 2. FASTAPI BACKEND & ML ENGINE
+  # ==========================================
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: mindscope-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-mindscope_user}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-mindscope_db}"
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=60
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - BACKEND_CORS_ORIGINS=["http://localhost", "http://localhost:80", "http://localhost:5173"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - mindscope-network
+
+  # ==========================================
+  # 3. REACT + VITE + TAILWIND FRONTEND
+  # ==========================================
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: mindscope-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - mindscope-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  mindscope-network:
+    driver: bridge
